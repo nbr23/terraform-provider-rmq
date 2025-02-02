@@ -3,12 +3,12 @@
 page_title: "rmq Provider"
 subcategory: ""
 description: |-
-  
+  A Terraform provider for RabbitMQ that enables AMQP-based message publishing and consumption.
 ---
 
 # rmq Provider
 
-
+A Terraform provider for RabbitMQ that enables AMQP-based message publishing and consumption.
 
 ## Example Usage
 

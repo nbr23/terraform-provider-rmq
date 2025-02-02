@@ -28,6 +28,7 @@ func (p *RabbitmqClientProvider) Metadata(ctx context.Context, req provider.Meta
 
 func (p *RabbitmqClientProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		MarkdownDescription: "A Terraform provider for RabbitMQ that enables AMQP-based message publishing and consumption.",
 		Attributes: map[string]schema.Attribute{
 			"uri": schema.StringAttribute{
 				MarkdownDescription: "amqp URI",
