@@ -2,10 +2,12 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -30,6 +32,7 @@ type MessageDataSourceModel struct {
 	Exchange        types.String `tfsdk:"exchange"`
 	RoutingKey      types.String `tfsdk:"routing_key"`
 	Timeout         types.String `tfsdk:"timeout"`
+	DecodeMsgpack   types.Bool   `tfsdk:"decode_msgpack"`
 	Messages        []Message    `tfsdk:"messages"`
 }
 
@@ -48,6 +51,45 @@ type Message struct {
 	Type            types.String `tfsdk:"type"`
 	UserId          types.String `tfsdk:"user_id"`
 	AppId           types.String `tfsdk:"app_id"`
+}
+
+func decodeMessage(data MessageDataSourceModel, msg amqp.Delivery) Message {
+	decodedMsg := Message{
+		Body:        types.StringValue(string(msg.Body)),
+		Headers:     map[string]types.String{},
+		RoutingKey:  types.StringValue(msg.RoutingKey),
+		ContentType: types.StringValue(msg.ContentType),
+
+		ContentEncoding: types.StringValue(msg.ContentEncoding),
+		DeliveryMode:    msg.DeliveryMode,
+		Priority:        msg.Priority,
+		CorrelationId:   types.StringValue(msg.CorrelationId),
+		ReplyTo:         types.StringValue(msg.ReplyTo),
+		Timestamp:       types.Int64Value(msg.Timestamp.Unix()),
+		Type:            types.StringValue(msg.Type),
+		UserId:          types.StringValue(msg.UserId),
+		AppId:           types.StringValue(msg.AppId),
+	}
+
+	if msg.ContentType == "application/msgpack" && data.DecodeMsgpack.ValueBool() {
+		var decoded map[string]interface{}
+		handle := codec.MsgpackHandle{
+			RawToString: true,
+			WriteExt:    true,
+		}
+
+		dec := codec.NewDecoderBytes(msg.Body, &handle)
+		if err := dec.Decode(&decoded); err != nil {
+			panic(err)
+		}
+
+		json, err := json.Marshal(decoded)
+		if err != nil {
+			panic(err)
+		}
+		decodedMsg.Body = types.StringValue(string(json))
+	}
+	return decodedMsg
 }
 
 func (d *MessageDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -85,6 +127,10 @@ func (d *MessageDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 			"timeout": schema.StringAttribute{
 				Optional:    true,
 				Description: "Timeout for consuming messages (default: 20m)",
+			},
+			"decode_msgpack": schema.BoolAttribute{
+				Optional:    true,
+				Description: "Whether to decode msgpack messages to json (default: true)",
 			},
 			"messages": schema.ListNestedAttribute{
 				Computed: true,
@@ -157,6 +203,15 @@ func (d *MessageDataSource) Configure(ctx context.Context, req datasource.Config
 	d.client = client
 }
 
+func setDefaultMessageDataSourceModel(data *MessageDataSourceModel) {
+	if data.Timeout.IsNull() {
+		data.Timeout = types.StringValue("20m")
+	}
+	if data.DecodeMsgpack.IsNull() {
+		data.DecodeMsgpack = types.BoolValue(true)
+	}
+}
+
 func (d *MessageDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data MessageDataSourceModel
 
@@ -166,16 +221,14 @@ func (d *MessageDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
+	setDefaultMessageDataSourceModel(&data)
+
 	var timeout time.Duration
-	if data.Timeout.ValueString() != "" {
-		var err error
-		timeout, err = time.ParseDuration(data.Timeout.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid timeout", err.Error())
-			return
-		}
-	} else {
-		timeout = 20 * time.Minute
+	var err error
+	timeout, err = time.ParseDuration(data.Timeout.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid timeout", err.Error())
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -253,22 +306,7 @@ func (d *MessageDataSource) Read(ctx context.Context, req datasource.ReadRequest
 				break
 			}
 
-			data.Messages = append(data.Messages, Message{
-				Body:        types.StringValue(string(msg.Body)),
-				Headers:     map[string]types.String{},
-				RoutingKey:  types.StringValue(msg.RoutingKey),
-				ContentType: types.StringValue(msg.ContentType),
-
-				ContentEncoding: types.StringValue(msg.ContentEncoding),
-				DeliveryMode:    msg.DeliveryMode,
-				Priority:        msg.Priority,
-				CorrelationId:   types.StringValue(msg.CorrelationId),
-				ReplyTo:         types.StringValue(msg.ReplyTo),
-				Timestamp:       types.Int64Value(msg.Timestamp.Unix()),
-				Type:            types.StringValue(msg.Type),
-				UserId:          types.StringValue(msg.UserId),
-				AppId:           types.StringValue(msg.AppId),
-			})
+			data.Messages = append(data.Messages, decodeMessage(data, msg))
 
 			if data.Ack.ValueBool() {
 				err = msg.Ack(false)
