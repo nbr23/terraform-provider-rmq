@@ -54,7 +54,7 @@ func (d *MessageDataSource) Metadata(ctx context.Context, req datasource.Metadat
 
 func (d *MessageDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Consume a message from an exchange.",
+		MarkdownDescription: "Consume `message_count` messages from `exchange`.\nA temporary queue (either named `queue_name`, or `queue_name_prefix+uuid()`) and binds it to `exchange` using the specified routing key.\nOnce `message_count` messages have been consumed successfully, the temporary queue is deleted.",
 		Attributes: map[string]schema.Attribute{
 			"queue_name": schema.StringAttribute{
 				Optional:    true,

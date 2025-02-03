@@ -3,12 +3,16 @@
 page_title: "rmq_message Data Source - rmq"
 subcategory: ""
 description: |-
-  Consume a message from an exchange.
+  Consume message_count messages from exchange.
+  A temporary queue (either named queue_name, or queue_name_prefix+uuid()) and binds it to exchange using the specified routing key.
+  Once message_count messages have been consumed successfully, the temporary queue is deleted.
 ---
 
 # rmq_message (Data Source)
 
-Consume a message from an exchange.
+Consume `message_count` messages from `exchange`.
+A temporary queue (either named `queue_name`, or `queue_name_prefix+uuid()`) and binds it to `exchange` using the specified routing key.
+Once `message_count` messages have been consumed successfully, the temporary queue is deleted.
 
 ## Example Usage
 
