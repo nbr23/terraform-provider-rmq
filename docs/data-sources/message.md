@@ -57,6 +57,7 @@ output "message" {
 
 - `queue_name` (String) Name of the temporary queue to create for message consumption
 - `queue_name_prefix` (String) Name prefix of the temporary queue to create for message consumption
+- `timeout` (String) Timeout for consuming messages
 
 ### Read-Only
 

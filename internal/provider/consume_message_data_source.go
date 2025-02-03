@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -28,6 +29,7 @@ type MessageDataSourceModel struct {
 	MessageCount    types.Int64  `tfsdk:"message_count"`
 	Exchange        types.String `tfsdk:"exchange"`
 	RoutingKey      types.String `tfsdk:"routing_key"`
+	Timeout         types.String `tfsdk:"timeout"`
 	Messages        []Message    `tfsdk:"messages"`
 }
 
@@ -79,6 +81,10 @@ func (d *MessageDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 			"routing_key": schema.StringAttribute{
 				Required:    true,
 				Description: "Routing key to bind to the exchange",
+			},
+			"timeout": schema.StringAttribute{
+				Optional:    true,
+				Description: "Timeout for consuming messages",
 			},
 			"messages": schema.ListNestedAttribute{
 				Computed: true,
@@ -160,6 +166,21 @@ func (d *MessageDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
+	var timeout time.Duration
+	if data.Timeout.ValueString() != "" {
+		var err error
+		timeout, err = time.ParseDuration(data.Timeout.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid timeout", err.Error())
+			return
+		}
+	} else {
+		timeout = 20 * time.Minute
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	ch, err := d.client.Channel()
 
 	if err != nil {
@@ -223,37 +244,55 @@ func (d *MessageDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
-	for i := 0; i < int(data.MessageCount.ValueInt64()); i++ {
-		msg := <-msgs
+	done := make(chan error)
+	go func() {
+		for i := 0; i < int(data.MessageCount.ValueInt64()); i++ {
+			msg := <-msgs
 
-		if msg.Body == nil {
-			break
-		}
+			if msg.Body == nil {
+				break
+			}
 
-		data.Messages = append(data.Messages, Message{
-			Body:        types.StringValue(string(msg.Body)),
-			Headers:     map[string]types.String{},
-			RoutingKey:  types.StringValue(msg.RoutingKey),
-			ContentType: types.StringValue(msg.ContentType),
+			data.Messages = append(data.Messages, Message{
+				Body:        types.StringValue(string(msg.Body)),
+				Headers:     map[string]types.String{},
+				RoutingKey:  types.StringValue(msg.RoutingKey),
+				ContentType: types.StringValue(msg.ContentType),
 
-			ContentEncoding: types.StringValue(msg.ContentEncoding),
-			DeliveryMode:    msg.DeliveryMode,
-			Priority:        msg.Priority,
-			CorrelationId:   types.StringValue(msg.CorrelationId),
-			ReplyTo:         types.StringValue(msg.ReplyTo),
-			Timestamp:       types.Int64Value(msg.Timestamp.Unix()),
-			Type:            types.StringValue(msg.Type),
-			UserId:          types.StringValue(msg.UserId),
-			AppId:           types.StringValue(msg.AppId),
-		})
+				ContentEncoding: types.StringValue(msg.ContentEncoding),
+				DeliveryMode:    msg.DeliveryMode,
+				Priority:        msg.Priority,
+				CorrelationId:   types.StringValue(msg.CorrelationId),
+				ReplyTo:         types.StringValue(msg.ReplyTo),
+				Timestamp:       types.Int64Value(msg.Timestamp.Unix()),
+				Type:            types.StringValue(msg.Type),
+				UserId:          types.StringValue(msg.UserId),
+				AppId:           types.StringValue(msg.AppId),
+			})
 
-		if data.Ack.ValueBool() {
-			err = msg.Ack(false)
-			if err != nil {
-				resp.Diagnostics.AddError("Error acknowledging message", err.Error())
-				return
+			if data.Ack.ValueBool() {
+				err = msg.Ack(false)
+				if err != nil {
+					resp.Diagnostics.AddError("Error acknowledging message", err.Error())
+					done <- err
+					return
+				}
 			}
 		}
+		done <- nil
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return
+		}
+	case <-ctx.Done():
+		resp.Diagnostics.AddError(
+			"Timeout exceeded",
+			fmt.Sprintf("Operation timed out after %s", timeout),
+		)
+		return
 	}
 
 	_, err = ch.QueueDelete(
