@@ -84,7 +84,7 @@ func (d *MessageDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 			},
 			"timeout": schema.StringAttribute{
 				Optional:    true,
-				Description: "Timeout for consuming messages",
+				Description: "Timeout for consuming messages (default: 20m)",
 			},
 			"messages": schema.ListNestedAttribute{
 				Computed: true,
